@@ -21,44 +21,45 @@
 #ifndef LIBWALLET_URI_HPP
 #define LIBWALLET_URI_HPP
 
+#include <boost/optional.hpp>
 #include <bitcoin/address.hpp>
 
 namespace libwallet {
 
-struct uri_parse_handler {
-    virtual void got_address(std::string& address) = 0;
-    virtual void got_param(std::string& key, std::string& value) = 0;
+typedef boost::optional<libbitcoin::payment_address> optional_address;
+
+struct parameter_pair
+{
+    std::string key, value;
 };
 
-bool uri_parse(const std::string& uri, uri_parse_handler& handler);
-bool uri_validate(const std::string& uri);
+struct uri_parse_result
+{
+    typedef std::vector<parameter_pair> parameter_list;
+
+    optional_address address;
+    parameter_list parameters;
+};
+
+bool uri_parse(const std::string& uri, uri_parse_result& result);
 
 /**
  * A decoded bitcoin URI corresponding to BIP 21 and BIP 72.
  * All string members are UTF-8.
  */
-struct decoded_uri
+struct uri_decode_result
 {
-    bool valid;
-    bool has_address;
-    bool has_amount;
-    bool has_label;
-    bool has_message;
-    bool has_r;
+    typedef boost::optional<uint64_t> optional_amount;
+    typedef boost::optional<std::string> optional_string;
 
-    libbitcoin::payment_address address;
-    uint64_t amount;
-    std::string label;
-    std::string message;
-    std::string r;
-
-    decoded_uri()
-      : valid(true), has_address(false), has_amount(false),
-        has_label(false), has_message(false), has_r(false)
-    {}
+    optional_address address;
+    optional_amount amount;
+    optional_string label;
+    optional_string message;
+    optional_string r;
 };
 
-decoded_uri uri_decode(const std::string& uri);
+bool uri_decode(const std::string& uri, uri_decode_result& result);
 
 /**
  * Parses a bitcoin amount string.

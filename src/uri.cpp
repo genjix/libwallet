@@ -19,9 +19,10 @@
  */
 #include <wallet/uri.hpp>
 
-#include <bitcoin/utility/base58.hpp>
 #include <algorithm>
-#include <stdlib.h>
+#include <cstdlib>
+#include <boost/lexical_cast.hpp>
+#include <bitcoin/utility/base58.hpp>
 
 namespace libwallet {
 
@@ -81,7 +82,7 @@ static std::string unescape(sci& i, sci end, bool (*is_valid)(char))
     return out;
 }
 
-bool uri_parse(const std::string& uri, uri_parse_handler& handler)
+bool uri_parse(const std::string& uri, uri_parse_result& result)
 {
     auto i = uri.begin();
 
@@ -100,7 +101,12 @@ bool uri_parse(const std::string& uri, uri_parse_handler& handler)
     if (uri.end() != i && '?' != *i)
         return false;
     if (!address.empty())
-        handler.got_address(address);
+    {
+        libbitcoin::payment_address payaddr;
+        if (!payaddr.set_encoded(address))
+            return false;
+        result.address.reset(payaddr);
+    }
 
     // Parameters:
     while (uri.end() != i)
@@ -117,76 +123,39 @@ bool uri_parse(const std::string& uri, uri_parse_handler& handler)
         }
         if (uri.end() != i && '&' != *i)
             return false;
-        if (!key.empty())
-            handler.got_param(key, value);
+        if (key.empty())
+            continue;
+        result.parameters.emplace_back(parameter_pair{key, value});
     }
     return true;
 }
 
-bool uri_validate(const std::string& uri)
+bool uri_decode(const std::string& uri, uri_decode_result& result)
 {
-    class parse_handler: public uri_parse_handler
+    uri_parse_result raw_result;
+    if (!uri_parse(uri, raw_result))
+        return false;
+    if (raw_result.address)
+        result.address.reset(raw_result.address.get());
+    for (const parameter_pair& pair: raw_result.parameters)
     {
-        virtual void got_address(std::string& address)
+        if (pair.key == "amount")
         {
-            (void)address;
+            uint64_t amount = parse_amount(pair.value);
+            if (amount == std::numeric_limits<uint64_t>::max())
+                return false;
+            result.amount.reset(amount);
         }
-        virtual void got_param(std::string& key, std::string& value)
-        {
-            (void)key;
-            (void)value;
-        }
-    } handler;
-    return uri_parse(uri, handler);
-}
-
-decoded_uri uri_decode(const std::string& uri)
-{
-    class parse_handler: public uri_parse_handler
-    {
-    public:
-        decoded_uri wip_;
-        virtual void got_address(std::string& address)
-        {
-            if (wip_.address.set_encoded(address))
-                wip_.has_address = true;
-            else
-                wip_.valid = false;
-        }
-        virtual void got_param(std::string& key, std::string& value)
-        {
-            if ("amount" == key)
-            {
-                wip_.amount = parse_amount(value);
-                if (static_cast<uint64_t>(-1) != wip_.amount)
-                    wip_.has_amount = true;
-                else
-                    wip_.valid = false;
-            }
-            else if ("label" == key)
-            {
-                wip_.label = std::move(value);
-                wip_.has_label = true;
-            }
-            else if ("message" == key)
-            {
-                wip_.message = std::move(value);
-                wip_.has_message = true;
-            }
-            else if ("r" == key)
-            {
-                wip_.r = std::move(value);
-                wip_.has_r = true;
-            }
-            else if (!key.compare(0, 4, "req-"))
-            {
-                wip_.valid = false;
-            }
-        }
-    } handler;
-    if (!uri_parse(uri, handler))
-        handler.wip_.valid = false;
-    return handler.wip_;
+        else if (pair.key == "label")
+            result.label.reset(pair.value);
+        else if (pair.key == "message")
+            result.message.reset(pair.value);
+        else if (pair.key == "r")
+            result.r.reset(pair.value);
+        else if (!pair.key.compare(0, 4, "req-"))
+            return false;
+    }
+    return true;
 }
 
 /**
@@ -209,9 +178,10 @@ static bool check_amount(const std::string& amount)
 uint64_t parse_amount(const std::string& amount)
 {
     if (!check_amount(amount))
-        return static_cast<uint64_t>(-1);
+        return std::numeric_limits<uint64_t>::max();
     // This code might have numerical problems:
-    return static_cast<uint64_t>(100000000*strtod(amount.c_str(), nullptr));
+    return static_cast<uint64_t>(100000000 *
+        boost::lexical_cast<double>(amount));
 }
 
 } // namespace libwallet
